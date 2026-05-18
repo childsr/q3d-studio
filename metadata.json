@@ -1,0 +1,6 @@
+{
+  "name": "Functional 3D Studio",
+  "description": "A 3D modeling environment that uses Functional Geometry concepts via JavaScript to construct and combine primitives.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
