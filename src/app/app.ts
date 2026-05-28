@@ -3,6 +3,8 @@ import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
@@ -58,24 +60,24 @@ const parenFold = foldService.of((state: EditorState, lineStart: number, lineEnd
 
 // Functional Geometry Primitives and Transforms
 export type FunGeoObject = THREE.Object3D;
+export type Transform = (obj: FunGeoObject) => FunGeoObject
 
 export const cube = (size = 1): FunGeoObject => {
   const geometry = new THREE.BoxGeometry(size, size, size);
   const material = new THREE.MeshStandardMaterial({ wireframe: true, color: 0x888888 });
   return new THREE.Mesh(geometry, material);
 };
-
 export const sphere = (radius = 0.5): FunGeoObject => {
   const geometry = new THREE.SphereGeometry(radius, 16, 16);
   const material = new THREE.MeshStandardMaterial({ wireframe: true, color: 0x888888 });
   return new THREE.Mesh(geometry, material);
 };
-
 export const cylinder = (radiusTop = 0.5, radiusBottom = 0.5, height = 1): FunGeoObject => {
   const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 16);
   const material = new THREE.MeshStandardMaterial({ wireframe: true, color: 0x888888 });
   return new THREE.Mesh(geometry, material);
 }
+export const cone = (radiusBottom = 0.5, height = 1) => cylinder(0,radiusBottom,height);
 
 export const group = (...objs: FunGeoObject[]): FunGeoObject => {
   const g = new THREE.Group();
@@ -85,7 +87,14 @@ export const group = (...objs: FunGeoObject[]): FunGeoObject => {
   return g;
 };
 
-export const translate = (x: number, y: number, z: number) => (obj: FunGeoObject): FunGeoObject => {
+export const compose = (...fs: [Transform, ...Transform[]]): Transform => obj => {
+  let result = obj;
+  for (let i = fs.length - 1; i >= 0; i--) {
+    result = fs[i](result);
+  }
+  return result;
+};
+export const translate = (x: number, y: number, z: number): Transform => obj => {
   const g = new THREE.Group();
   g.add(obj.clone());
   g.position.set(x, y, z);
@@ -96,7 +105,7 @@ export const moveX = (x: number) => translate(x,0,0);
 export const moveY = (y: number) => translate(0,y,0);
 export const moveZ = (z: number) => translate(0,0,z);
 
-export const scale = (sx: number, sy: number, sz: number) => (obj: FunGeoObject): FunGeoObject => {
+export const scale = (sx: number, sy: number, sz: number): Transform => obj => {
   const g = new THREE.Group();
   g.add(obj.clone());
   g.scale.set(sx, sy, sz);
@@ -105,14 +114,18 @@ export const scale = (sx: number, sy: number, sz: number) => (obj: FunGeoObject)
 export const scaleX = (x: number) => scale(x,1,1);
 export const scaleY = (y: number) => scale(1,y,1);
 export const scaleZ = (z: number) => scale(1,1,z);
-export const sc = (k: number) => scale(k,k,k);
+export const sc = (s: number) => scale(s,s,s);
 
-export const rotate = (rx: number, ry: number, rz: number) => (obj: FunGeoObject): FunGeoObject => {
+export const rotate = (rx: number, ry: number, rz: number): Transform => obj => {
   const g = new THREE.Group();
   g.add(obj.clone());
   g.rotation.set(rx, ry, rz);
   return g;
 };
+export const rot = rotate;
+export const rotX = (rx: number) => rot(rx,0,0);
+export const rotY = (ry: number) => rot(0,ry,0);
+export const rotZ = (rz: number) => rot(0,0,rz);
 
 export const paint = (rgb: [number, number, number]) => (obj: FunGeoObject): FunGeoObject => {
   const cloned = obj.clone();
@@ -128,6 +141,33 @@ export const paint = (rgb: [number, number, number]) => (obj: FunGeoObject): Fun
     }
   });
   return cloned;
+};
+
+export const flipX = scaleX(-1);
+export const flipY = scaleY(-1);
+export const flipZ = scaleZ(-1);
+
+export const mirrorX: Transform = obj => group(obj, flipX (obj));
+export const mirrorY: Transform = obj => group(obj, flipY (obj));
+export const mirrorZ: Transform = obj => group(obj, flipZ (obj));
+
+// export const tag = (tag: string): Transform => obj => {
+//   if (!obj.tags) obj.tags = [];
+//   obj.tags.push(tag);
+//   return obj;
+// };
+
+const BUILTINS = {
+  cube, sphere, cylinder,
+  group,
+  compose,
+  translate, move, moveX, moveY, moveZ,
+  scale, sc, scaleX, scaleY, scaleZ,
+  rotate, rot, rotX, rotY, rotZ,
+  paint,
+  flipX, flipY, flipZ,
+  mirrorX, mirrorY, mirrorZ,
+  // tag
 };
 
 const DEFAULT_CODE = `
@@ -151,36 +191,28 @@ const head = (
 )
 const body = (
   (paint ([0.2, 0.2, 0.8])
-    (translate (0, -1, 0)
+    (move (0, -1, 0)
       (cube (1))))
 )
+
 const armL = (
   (paint ([1, 0.8, 0.6])
-    (translate (-0.8, -0.8, 0)
+    (move (-0.8, -0.8, 0)
       (scale (0.3, 1.2, 0.3)
-        (cube (1)))))
+        (cube()))))
 )
-const armR = (
-  (paint ([1, 0.8, 0.6])
-    (translate (0.8, -0.8, 0)
-      (scale (0.3, 1.2, 0.3)
-        (cube (1)))))
-)
+const arms = mirrorX (armL)
+
 const legL = (
   (paint ([0.2, 0.2, 0.2])
     (translate (-0.3, -2, 0)
       (scale (0.4, 1, 0.4)
         (cube (1)))))
 )
-const legR = (
-  (paint ([0.2, 0.2, 0.2])
-    (translate (0.3, -2, 0)
-      (scale (0.4, 1, 0.4)
-        (cube (1)))))
-)
+const legs = mirrorX (legL)
 
 return (
-  group (head, body, armL, armR, legL, legR)
+  group (head, body, arms, legs)
 )
 `.trim();
 
@@ -245,6 +277,14 @@ return (
         <div class="flex-1 relative bg-[#1A1B20] overflow-hidden" [class.pointer-events-none]="isDragging()">
           <div #canvasContainer class="absolute inset-0 cursor-move"></div>
           
+          <div class="absolute top-4 right-4 flex gap-2 pointer-events-auto">
+            <button (click)="exportGLTF()" class="px-3 py-1.5 bg-[#25262B]/80 backdrop-blur border border-slate-700 rounded text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-700 transition-colors">
+              Export GLTF
+            </button>
+            <button (click)="exportSTL()" class="px-3 py-1.5 bg-[#25262B]/80 backdrop-blur border border-slate-700 rounded text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-700 transition-colors">
+              Export STL
+            </button>
+          </div>
         </div>
       </main>
       
@@ -421,26 +461,10 @@ export class App implements OnInit, OnDestroy {
         const child = this.userModelGroup.children[0];
         this.userModelGroup.remove(child); 
       }
-
-      // Create a function that provides our primitives in its scope
-      const createModel = new Function(
-        'cube', 'sphere', 'cylinder',
-        'group',
-        'translate', 'move', 'moveX', `moveY`, 'moveZ',
-        'scale', 'sc', 'scaleX', 'scaleY', 'scaleZ',
-        'rotate',
-        'paint',
-        this.code()
-      );
-
-      const result = createModel(
-        cube, sphere, cylinder,
-        group,
-        translate, move, moveX, moveY, moveZ,
-        scale, sc, scaleX, scaleY, scaleZ,
-        rotate,
-        paint
-      );
+      const params = Object.keys(BUILTINS)
+      const args = Object.values(BUILTINS)
+      const createModel = new Function(...params,this.code());
+      const result = createModel(...args);
 
       if (result instanceof THREE.Object3D) {
         this.userModelGroup.add(result);
@@ -451,5 +475,38 @@ export class App implements OnInit, OnDestroy {
       console.error(e);
       this.error.set(e.message || 'Execution error');
     }
+  }
+
+  exportGLTF() {
+    const exporter = new GLTFExporter();
+    exporter.parse(
+      this.userModelGroup,
+      (gltf) => {
+        const output = JSON.stringify(gltf, null, 2);
+        const blob = new Blob([output], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'model.gltf';
+        a.click();
+        URL.revokeObjectURL(url);
+      },
+      (error) => {
+        console.error('An error happened during GLTF export:', error);
+      },
+      { binary: false }
+    );
+  }
+
+  exportSTL() {
+    const exporter = new STLExporter();
+    const result = exporter.parse(this.userModelGroup);
+    const blob = new Blob([result], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'model.stl';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 }
